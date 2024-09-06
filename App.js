@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, StyleSheet, Button, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { Audio } from 'expo-av';
 import axios from 'axios';
 import NetInfo from '@react-native-community/netinfo';
 
 export default function App() {
-  const [recording, setRecording] = useState(null);
   const [fileName, setFileName] = useState('');
   const [serverUrl, setServerUrl] = useState('');
   const [uploadEndpoint, setUploadEndpoint] = useState('');
@@ -14,6 +13,9 @@ export default function App() {
   const [minutes, setMinutes] = useState('');
   const [timerId, setTimerId] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
+
+  // Use ref to store the recording instance
+  const recordingRef = useRef(null);
 
   useEffect(() => {
     const checkPermissions = async () => {
@@ -69,7 +71,7 @@ export default function App() {
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      setRecording(recording);
+      recordingRef.current = recording; // Set the ref
       console.log('Recording started:', recording);
 
       startTimer();
@@ -79,68 +81,64 @@ export default function App() {
     }
   }
 
-const stopRecording = useCallback(async () => {
-  console.log('Clearing Timer');
-  clearTimer(); // Clear any existing timer
+  const stopRecording = useCallback(async () => {
+    console.log('Clearing Timer');
+    clearTimer(); // Clear any existing timer
 
-  if (recording) {
-    try {
-      console.log('Stopping the recording...');
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      console.log('Recording stopped. URI:', uri);
+    if (recordingRef.current) {
+      try {
+        console.log('Stopping the recording...');
+        await recordingRef.current.stopAndUnloadAsync();
+        const uri = recordingRef.current.getURI();
+        console.log('Recording stopped. URI:', uri);
 
-      // Reset the recording state
-      setRecording(null);
+        // Reset the recording state
+        recordingRef.current = null;
 
-      // Apply audio mode settings
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+        // Apply audio mode settings
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
 
-      // Check if the recording is valid and then attempt upload
-      if (uri) {
-        const name = fileName.trim() || `recording_${new Date().toISOString()}.m4a`;
-        console.log('Attempting to upload file:', name);
-        attemptUploadFile(uri, name);
-      } else {
-        console.log('No valid URI to upload');
+        // Check if the recording is valid and then attempt upload
+        if (uri) {
+          const name = fileName.trim() || `recording_${new Date().toISOString()}.m4a`;
+          console.log('Attempting to upload file:', name);
+          await attemptUploadFile(uri, name); // Await upload attempt to ensure proper flow
+        } else {
+          console.log('No valid URI to upload');
+        }
+      } catch (err) {
+        console.error('Failed to stop recording', err);
+        Alert.alert('Error', 'Failed to stop recording. Please try again.');
       }
-    } catch (err) {
-      console.error('Failed to stop recording', err);
-      Alert.alert('Error', 'Failed to stop recording. Please try again.');
+    } else {
+      // Log detailed information if no recording is in progress
+      console.log('No recording found. Recording state:', recordingRef.current);
+      setRecording(null);
     }
-  } else {
-    // If no recording is in progress, simulate stopping as if it was
-    console.log('No recording in progress, simulating stop...');
-    // Here you could handle additional clean-up or UI updates if necessary
-    setRecording(null);
-  }
-}, [recording, fileName]);
-
-  
-  
-  
+  }, [fileName]);
 
   const startTimer = () => {
     const parsedHours = parseInt(hours) || 0;
     const parsedMinutes = parseInt(minutes) || 0;
     const duration = (parsedHours * 3600) + (parsedMinutes * 60);
-  
+
     if (isNaN(duration) || duration <= 0) {
       Alert.alert('Invalid Duration', 'Please enter a valid duration in hours and minutes.');
       return;
     }
-  
-    // Log timer start
+
+    // Clear any existing timer before starting a new one
+    clearTimer();
+
     console.log(`Starting timer for ${duration} seconds`);
-  
+
     const id = setTimeout(() => {
       console.log(`Timer expired after ${duration} seconds`);
       stopRecording(); // Ensure stopRecording is called here
     }, duration * 1000);
-  
+
     setTimerId(id);
   };
-  
 
   function clearTimer() {
     if (timerId) {
@@ -190,28 +188,36 @@ const stopRecording = useCallback(async () => {
       type: 'audio/m4a',
       name,
     });
-
+  
+    console.log('Upload Endpoint:', uploadEndpoint);
+    console.log('FormData:', formData);
+  
     try {
       const response = await axios.post(uploadEndpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-
+      console.log('Upload response:', response);
       if (response.status !== 200) {
         throw new Error('Upload failed with status ' + response.status);
       }
     } catch (error) {
+      console.error('Error in uploadFile:', error.message);
       throw error;
     }
   }
+  
 
   async function checkApi() {
     try {
-      const response = await axios.get(`${serverUrl}/status`);
+      const response = await fetch(`${serverUrl}/status`, {
+        method: 'GET',
+        mode: 'no-cors',
+      });
       console.log('API is reachable:', response.data);
-      Alert.alert('API Check', 'Server is reachable');
+      Alert.alert('API Check', `Server at ${serverUrl} is reachable`);
     } catch (error) {
       console.error('Error reaching API', error);
-      Alert.alert('API Check Failed', 'Unable to reach the server');
+      Alert.alert('API Check Failed', `Unable to reach the server at ${serverUrl}` + `${error}`);
     }
   }
 
@@ -251,8 +257,8 @@ const stopRecording = useCallback(async () => {
         />
       </View>
       <Button
-        title={recording ? 'Stop Recording' : 'Start Recording'}
-        onPress={recording ? stopRecording : startRecording}
+        title={recordingRef.current ? 'Stop Recording' : 'Start Recording'}
+        onPress={recordingRef.current ? stopRecording : startRecording}
       />
       <Button
         title="Check Server"
