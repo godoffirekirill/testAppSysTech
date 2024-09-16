@@ -13,6 +13,7 @@ export default function App() {
   const [minutes, setMinutes] = useState('');
   const [timerId, setTimerId] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
+  const [isRecording, setIsRecording] = useState(false); // New state to track recording status
 
   // Use ref to store the recording instance
   const recordingRef = useRef(null);
@@ -50,70 +51,80 @@ export default function App() {
   }
 
   async function startRecording() {
+    // Check if a recording is already in progress
+    if (recordingRef.current) {
+      Alert.alert('Recording in Progress', 'A recording is already in progress. Please stop it before starting a new one.');
+      return;
+    }
+  
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission required', 'Microphone access is required to record audio.');
       return;
     }
-
+  
     if (!isConnected) {
       Alert.alert('Network Error', 'No internet connection. Please check your network before recording.');
       return;
     }
-
+  
     try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
       });
-
+  
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
       recordingRef.current = recording; // Set the ref
+      setIsRecording(true); // Update state to reflect recording status
       console.log('Recording started:', recording);
-
-      startTimer();
+  
+      if (hours || minutes) {
+        startTimer(); // Start timer if hours or minutes are provided
+      }
     } catch (err) {
       console.error('Failed to start recording', err);
       Alert.alert('Error', 'Failed to start recording. Please try again.');
+      recordingRef.current = null; // Reset in case of error
+      setIsRecording(false);
     }
   }
 
   const stopRecording = useCallback(async () => {
-    console.log('Clearing Timer');
+    if (!recordingRef.current) {
+      Alert.alert('No Recording', 'There is no recording to stop.');
+      return;
+    }
+  
     clearTimer(); // Clear any existing timer
-
-    if (recordingRef.current) {
-      try {
-        console.log('Stopping the recording...');
-        await recordingRef.current.stopAndUnloadAsync();
-        const uri = recordingRef.current.getURI();
-        console.log('Recording stopped. URI:', uri);
-
-        // Reset the recording state
-        recordingRef.current = null;
-
-        // Apply audio mode settings
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-
-        // Check if the recording is valid and then attempt upload
-        if (uri) {
-          const name = fileName.trim() || `recording_${new Date().toISOString()}.m4a`;
-          console.log('Attempting to upload file:', name);
-          await attemptUploadFile(uri, name); // Await upload attempt to ensure proper flow
-        } else {
-          console.log('No valid URI to upload');
-        }
-      } catch (err) {
-        console.error('Failed to stop recording', err);
-        Alert.alert('Error', 'Failed to stop recording. Please try again.');
+  
+    try {
+      console.log('Stopping the recording...');
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      console.log('Recording stopped. URI:', uri);
+  
+      // Reset the recording state
+      recordingRef.current = null; // Clear the ref to allow new recordings
+      setIsRecording(false); // Update state to reflect recording status
+  
+      // Apply audio mode settings
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+  
+      // Check if the recording is valid and then attempt upload
+      if (uri) {
+        const name = fileName.trim() || `recording_${new Date().toISOString()}.m4a`;
+        console.log('Attempting to upload file:', name);
+        await attemptUploadFile(uri, name); // Await upload attempt to ensure proper flow
+      } else {
+        console.log('No valid URI to upload');
       }
-    } else {
-      // Log detailed information if no recording is in progress
-      console.log('No recording found. Recording state:', recordingRef.current);
-      setRecording(null);
+    } catch (err) {
+      console.error('Failed to stop recording', err);
+      Alert.alert('Error', 'Failed to stop recording. Please try again.');
     }
   }, [fileName]);
 
@@ -122,22 +133,19 @@ export default function App() {
     const parsedMinutes = parseInt(minutes) || 0;
     const duration = (parsedHours * 3600) + (parsedMinutes * 60);
 
-    if (isNaN(duration) || duration <= 0) {
-      Alert.alert('Invalid Duration', 'Please enter a valid duration in hours and minutes.');
-      return;
+    // Only start the timer if duration is greater than 0
+    if (duration > 0) {
+      clearTimer(); // Clear any existing timer before starting a new one
+
+      console.log(`Starting timer for ${duration} seconds`);
+
+      const id = setTimeout(() => {
+        console.log(`Timer expired after ${duration} seconds`);
+        stopRecording(); // Ensure stopRecording is called here
+      }, duration * 1000);
+
+      setTimerId(id);
     }
-
-    // Clear any existing timer before starting a new one
-    clearTimer();
-
-    console.log(`Starting timer for ${duration} seconds`);
-
-    const id = setTimeout(() => {
-      console.log(`Timer expired after ${duration} seconds`);
-      stopRecording(); // Ensure stopRecording is called here
-    }, duration * 1000);
-
-    setTimerId(id);
   };
 
   function clearTimer() {
@@ -189,14 +197,10 @@ export default function App() {
       name,
     });
   
-    console.log('Upload Endpoint:', uploadEndpoint);
-    console.log('FormData:', formData);
-  
     try {
       const response = await axios.post(uploadEndpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      console.log('Upload response:', response);
       if (response.status !== 200) {
         throw new Error('Upload failed with status ' + response.status);
       }
@@ -205,7 +209,6 @@ export default function App() {
       throw error;
     }
   }
-  
 
   async function checkApi() {
     try {
@@ -213,11 +216,9 @@ export default function App() {
         method: 'GET',
         mode: 'no-cors',
       });
-      console.log('API is reachable:', response.data);
       Alert.alert('API Check', `Server at ${serverUrl} is reachable`);
     } catch (error) {
-      console.error('Error reaching API', error);
-      Alert.alert('API Check Failed', `Unable to reach the server at ${serverUrl}` + `${error}`);
+      Alert.alert('API Check Failed', `Unable to reach the server at ${serverUrl}`);
     }
   }
 
@@ -232,7 +233,6 @@ export default function App() {
       <Button
         title="Save Server URL"
         onPress={handleSaveServerUrl}
-        style={styles.saveButton}
       />
       <TextInput
         style={styles.input}
@@ -257,13 +257,12 @@ export default function App() {
         />
       </View>
       <Button
-        title={recordingRef.current ? 'Stop Recording' : 'Start Recording'}
-        onPress={recordingRef.current ? stopRecording : startRecording}
+        title={isRecording ? 'Stop Recording' : 'Start Recording'}
+        onPress={isRecording ? stopRecording : startRecording}
       />
       <Button
         title="Check Server"
         onPress={checkApi}
-        style={styles.checkButton}
       />
       {loading && <ActivityIndicator size="large" color="#0000ff" />}
     </View>
@@ -295,11 +294,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     width: '48%',
     paddingHorizontal: 10,
-  },
-  saveButton: {
-    marginBottom: 20,
-  },
-  checkButton: {
-    marginTop: 20,
   },
 });
