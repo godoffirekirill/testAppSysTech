@@ -70,8 +70,9 @@ AudioRecorderApp — это мобильное приложение, котор�
 - 📝 `TextInput` — ввод URL сервера, имени файла, таймера
 - 🔘 `Button` — управление записью и загрузкой
 - 🔄 `ActivityIndicator` — статус загрузки
-
----
+  
+## 🖥 Скриншоты:
+![](https://github.com/godoffirekirill/testAppSysTech/blob/main/screenshots/Screenshot%202025-04-17%20at%2010.11.32.png?raw=true)
 
 ## 🔧 Установка и запуск
 
